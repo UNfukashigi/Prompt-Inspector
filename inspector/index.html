@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Prompt Inspector | NovelAI, Stable Diffusion, ComfyUI メタデータ解析</title>
+    <meta name="description"
+        content="AI生成画像のプロンプト情報をローカルで解析。NovelAI, Stable Diffusion, ComfyUIのメタデータをブラウザ上で安全に表示・コピーできます。">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Outfit:wght@500;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+
+</head>
+
+<body>
+
+    <!-- Drop Zone -->
+    <div id="drop-zone">
+        <svg class="drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+        </svg>
+        <h1>AI Prompt Inspector</h1>
+        <p class="drop-hint">生成画像をドロップして情報を解析。<br>（外部サーバーへの送信は行われません）<br>NovelAI, Stable Diffusion, ComfyUI対応</p>
+        <input type="file" id="file-input" hidden accept="image/png, image/jpeg, image/webp">
+    </div>
+
+    <!-- Result View -->
+    <div id="result-view">
+        <button id="reset-btn" class="back-btn" title="別の画像を読み込む">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+            </svg>
+        </button>
+        <div class="preview-section">
+            <img id="preview-image" src="" alt="Preview">
+        </div>
+        <div class="info-section">
+            <div id="tool-badge-container"></div>
+
+            <div class="param-card" id="positive-card">
+                <div class="param-label">
+                    <span id="label-positive">Positive Prompt</span>
+                    <button class="copy-btn" onclick="copyText('content-positive', this)">Copy</button>
+                </div>
+                <div class="param-content" id="content-positive"></div>
+            </div>
+
+            <div class="param-card" id="negative-card">
+                <div class="param-label">
+                    <span id="label-negative">Negative Prompt</span>
+                    <button class="copy-btn" onclick="copyText('content-negative', this)">Copy</button>
+                </div>
+                <div class="param-content" id="content-negative"></div>
+            </div>
+
+            <div class="grid-params" id="meta-grid">
+                <!-- Parameters like Seed, Sampler will be injected here -->
+            </div>
+
+            <details class="param-card" id="raw-card" style="margin-top: 40px; opacity: 0.8;">
+                <summary class="param-label" style="cursor: pointer; list-style: none; outline: none;">
+                    <span>Raw Metadata (JSON/Text)</span>
+                    <button class="copy-btn"
+                        onclick="copyText('content-raw', this); event.preventDefault();">Copy</button>
+                </summary>
+                <div class="param-content" id="content-raw" style="font-size: 0.8rem; margin-top: 16px;"></div>
+            </details>
+        </div>
+    </div>
+
+    <!-- Reset button moved inside result-view -->
+
+    <script src="app.js"></script>
+</body>
+
+</html>
