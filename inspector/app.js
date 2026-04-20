@@ -1,3 +1,5 @@
+//test
+
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
 const resultView = document.getElementById('result-view');
