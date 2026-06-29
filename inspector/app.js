@@ -1,4 +1,4 @@
-const dropZone = document.getElementById('drop-zone');
+﻿const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
 const resultView = document.getElementById('result-view');
 const previewImage = document.getElementById('preview-image');
@@ -174,7 +174,7 @@ function displayMetadata(data) {
         }
     } 
     // 2. ComfyUI
-    else if (data["prompt"]) {
+    else if (isComfyPrompt(data["prompt"])) {
         source = "ComfyUI";
         try {
             const flow = JSON.parse(data["prompt"]);
@@ -224,6 +224,14 @@ function displayMetadata(data) {
             }
         }
     }
+    // 4. ANIMA / generic prompt metadata
+    else if (hasAnimaPromptMetadata(data)) {
+        source = "ANIMA";
+        const anima = parseAnimaMetadata(data);
+        positive = anima.positive;
+        negative = anima.negative;
+        params = anima.params;
+    }
 
     // UI Rendering
     badgeContainer.innerHTML = `<span class="tool-badge">${source}</span>`;
@@ -239,6 +247,154 @@ function displayMetadata(data) {
         item.innerHTML = `<span class="meta-label">${k}</span><span class="meta-value">${v}</span>`;
         metaGrid.appendChild(item);
     }
+}
+
+function isComfyPrompt(value) {
+    if (typeof value !== 'string' || value.trim() === '') return false;
+    try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === 'object' && Object.values(parsed).some(node =>
+            node && typeof node === 'object' && (
+                node.class_type ||
+                (node.inputs && typeof node.inputs === 'object')
+            )
+        );
+    } catch (e) {
+        return false;
+    }
+}
+
+function hasAnimaPromptMetadata(data) {
+    return getFirstMetadataValue(data, [
+        'anima_prompt',
+        'ANIMA prompt',
+        'prompt',
+        'positive',
+        'positive_prompt',
+        'caption',
+        'description',
+        'Description',
+        'ImageDescription',
+        'imagedescription',
+        'UserComment',
+        'usercomment',
+        '37510',
+        '270'
+    ]) !== "";
+}
+
+function parseAnimaMetadata(data) {
+    let positive = getFirstMetadataValue(data, [
+        'anima_prompt',
+        'ANIMA prompt',
+        'prompt',
+        'positive',
+        'positive_prompt',
+        'caption',
+        'description',
+        'Description',
+        'ImageDescription',
+        'imagedescription',
+        'UserComment',
+        'usercomment',
+        '37510',
+        '270'
+    ]);
+
+    let negative = getFirstMetadataValue(data, [
+        'negative',
+        'negative_prompt',
+        'negative prompt',
+        'undesired',
+        'uc'
+    ]);
+
+    const jsonText = getFirstMetadataValue(data, ['Comment', 'comment', 'metadata', 'generation_data']);
+    const parsed = parseJsonObject(jsonText);
+    if (parsed) {
+        positive = positive || getFirstMetadataValue(parsed, ['prompt', 'positive', 'caption', 'description']);
+        negative = negative || getFirstMetadataValue(parsed, ['negative', 'negative_prompt', 'uc', 'undesired']);
+    }
+
+    if (positive) {
+        const split = splitPromptSections(positive);
+        positive = split.positive;
+        negative = negative || split.negative;
+    }
+
+    const params = collectParams(data, parsed);
+    return { positive, negative, params };
+}
+
+function getFirstMetadataValue(source, keys) {
+    if (!source || typeof source !== 'object') return "";
+    const lowerMap = new Map(Object.keys(source).map(key => [key.toLowerCase(), key]));
+
+    for (const key of keys) {
+        const actualKey = key in source ? key : lowerMap.get(String(key).toLowerCase());
+        if (!actualKey) continue;
+
+        const value = source[actualKey];
+        if (typeof value === 'string' && value.trim()) return value.trim();
+        if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    }
+    return "";
+}
+
+function parseJsonObject(text) {
+    if (typeof text !== 'string' || text.trim() === '') return null;
+    try {
+        const parsed = JSON.parse(text);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function splitPromptSections(text) {
+    let positive = text;
+    let negative = "";
+
+    const negMatch = positive.match(/\n?Negative prompt:\s*/i);
+    if (negMatch) {
+        negative = positive.slice(negMatch.index + negMatch[0].length).trim();
+        positive = positive.slice(0, negMatch.index).trim();
+    }
+
+    const stepMatch = positive.match(/\n?Steps:\s*/i);
+    if (stepMatch) positive = positive.slice(0, stepMatch.index).trim();
+
+    const negativeStepMatch = negative.match(/\n?Steps:\s*/i);
+    if (negativeStepMatch) negative = negative.slice(0, negativeStepMatch.index).trim();
+
+    return { positive, negative };
+}
+
+function collectParams(data, parsed) {
+    const params = {};
+    const sources = [data, parsed].filter(Boolean);
+    const keyMap = {
+        Seed: ['seed'],
+        Steps: ['steps'],
+        Sampler: ['sampler', 'sampler_name'],
+        Scheduler: ['scheduler'],
+        CFG: ['cfg', 'cfg_scale', 'scale'],
+        Guidance: ['guidance', 'guidance_scale'],
+        Model: ['model', 'model_name'],
+        Size: ['size', 'resolution']
+    };
+
+    for (const [label, keys] of Object.entries(keyMap)) {
+        for (const source of sources) {
+            const value = getFirstMetadataValue(source, keys);
+            if (value) {
+                params[label] = value;
+                break;
+            }
+        }
+    }
+
+    return params;
 }
 
 function recursiveFindText(flow, input) {
@@ -284,3 +440,4 @@ function copyText(id, btn) {
         }, 2000);
     });
 }
+
