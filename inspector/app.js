@@ -146,6 +146,8 @@ function displayMetadata(data) {
     let positive = "";
     let negative = "";
     let params = {};
+    let positivePlaceholder = "(No positive prompt detected)";
+    let negativePlaceholder = "(No negative prompt detected)";
 
     // Reset UI Labels
     labelPositive.innerText = "Positive Prompt";
@@ -176,6 +178,8 @@ function displayMetadata(data) {
     // 2. ComfyUI
     else if (isComfyPrompt(data["prompt"])) {
         source = "ComfyUI";
+        positivePlaceholder = "(ComfyUI workflow prompt skipped)";
+        negativePlaceholder = "(ComfyUI workflow prompt skipped)";
         try {
             const flow = JSON.parse(data["prompt"]);
             const samplers = Object.values(flow).filter(n => 
@@ -183,21 +187,19 @@ function displayMetadata(data) {
             );
             if (samplers.length > 0) {
                 const s = samplers[0];
-                positive = recursiveFindText(flow, s.inputs.positive);
-                negative = recursiveFindText(flow, s.inputs.negative);
+                positive = safeFindComfyPromptText(flow, s.inputs.positive);
+                negative = safeFindComfyPromptText(flow, s.inputs.negative);
                 params = {
                     Seed: s.inputs.seed || s.inputs.noise_seed,
                     Steps: s.inputs.steps,
                     CFG: s.inputs.cfg,
                     Sampler: s.inputs.sampler_name,
                     Scheduler: s.inputs.scheduler,
-                    Denoise: s.inputs.denoise
+                    Denoise: s.inputs.denoise,
+                    Size: findLatentSize(flow, s.inputs.latent_image)
                 };
             } else {
-                // Simple search
-                const texts = Object.values(flow).filter(n => n.class_type === "CLIPTextEncode");
-                if (texts.length > 0) positive = texts[0].inputs.text || texts[0].inputs.prompt;
-                if (texts.length > 1) negative = texts[1].inputs.text || texts[1].inputs.prompt;
+                params = collectComfyParams(flow);
             }
         } catch (e) { console.error("ComfyUI Parse Error", e); }
     }
@@ -235,8 +237,8 @@ function displayMetadata(data) {
 
     // UI Rendering
     badgeContainer.innerHTML = `<span class="tool-badge">${source}</span>`;
-    contentPositive.innerText = positive || "(No positive prompt detected)";
-    contentNegative.innerText = negative || "(No negative prompt detected)";
+    contentPositive.innerText = positive || positivePlaceholder;
+    contentNegative.innerText = negative || negativePlaceholder;
     contentRaw.innerText = JSON.stringify(data, null, 2);
 
     metaGrid.innerHTML = '';
@@ -397,25 +399,92 @@ function collectParams(data, parsed) {
     return params;
 }
 
-function recursiveFindText(flow, input) {
+function safeFindComfyPromptText(flow, input) {
     if (!input) return "";
     const id = Array.isArray(input) ? String(input[0]) : String(input);
+    const node = flow[id];
+    if (!node?.inputs) return "";
+
+    const classType = String(node.class_type || "");
+    const allowedDirectTypes = new Set([
+        "CLIPTextEncode",
+        "CLIPTextEncodeSDXL",
+        "CLIPTextEncodeSDXLRefiner",
+        "Power Prompt (rgthree)"
+    ]);
+
+    if (!allowedDirectTypes.has(classType)) return "";
+
+    if (typeof node.inputs.text === 'string') return node.inputs.text;
+    if (typeof node.inputs.prompt === 'string') return node.inputs.prompt;
+
+    const parts = [];
+    for (const key of ['text_g', 'text_l']) {
+        if (typeof node.inputs[key] === 'string' && node.inputs[key].trim()) {
+            parts.push(node.inputs[key]);
+        }
+    }
+    return parts.join("\n").trim();
+}
+
+function collectComfyParams(flow) {
+    const params = {};
+    const latent = Object.values(flow).find(node =>
+        node?.class_type === "EmptyLatentImage" &&
+        node.inputs?.width &&
+        node.inputs?.height
+    );
+
+    if (latent) params.Size = `${latent.inputs.width}x${latent.inputs.height}`;
+    return params;
+}
+
+function recursiveFindText(flow, input, visited = new Set()) {
+    if (!input) return "";
+    const id = Array.isArray(input) ? String(input[0]) : String(input);
+    if (visited.has(id)) return "";
+    visited.add(id);
+
     const node = flow[id];
     if (!node) return "";
 
     if (node.inputs) {
+        if (typeof node.inputs.value === 'string') return node.inputs.value;
         if (typeof node.inputs.text === 'string') return node.inputs.text;
         if (typeof node.inputs.prompt === 'string') return node.inputs.prompt;
+
+        if (node.class_type === "StringConcatenate") {
+            const parts = [];
+            const delimiter = typeof node.inputs.delimiter === 'string' ? node.inputs.delimiter : '';
+            for (const key of ['string_a', 'string_b', 'string_c', 'string_d']) {
+                const found = recursiveFindText(flow, node.inputs[key], visited);
+                if (found) parts.push(found);
+            }
+            return parts.join(delimiter);
+        }
+
+        if (Array.isArray(node.inputs.text)) return recursiveFindText(flow, node.inputs.text, visited);
+        if (Array.isArray(node.inputs.prompt)) return recursiveFindText(flow, node.inputs.prompt, visited);
         
         // Follow conditioning
-        if (node.inputs.conditioning) return recursiveFindText(flow, node.inputs.conditioning);
-        if (node.inputs.conditioning_1) return recursiveFindText(flow, node.inputs.conditioning_1);
-        if (node.inputs.conditioning_2) return recursiveFindText(flow, node.inputs.conditioning_2);
-        if (node.inputs.base_conditioning) return recursiveFindText(flow, node.inputs.base_conditioning);
-        if (node.inputs.positive) return recursiveFindText(flow, node.inputs.positive);
-        if (node.inputs.negative) return recursiveFindText(flow, node.inputs.negative);
+        if (node.inputs.conditioning) return recursiveFindText(flow, node.inputs.conditioning, visited);
+        if (node.inputs.conditioning_1) return recursiveFindText(flow, node.inputs.conditioning_1, visited);
+        if (node.inputs.conditioning_2) return recursiveFindText(flow, node.inputs.conditioning_2, visited);
+        if (node.inputs.base_conditioning) return recursiveFindText(flow, node.inputs.base_conditioning, visited);
+        if (node.inputs.positive) return recursiveFindText(flow, node.inputs.positive, visited);
+        if (node.inputs.negative) return recursiveFindText(flow, node.inputs.negative, visited);
     }
     return "";
+}
+
+function findLatentSize(flow, input) {
+    if (!input) return undefined;
+    const id = Array.isArray(input) ? String(input[0]) : String(input);
+    const node = flow[id];
+    const width = node?.inputs?.width;
+    const height = node?.inputs?.height;
+    if (width && height) return `${width}x${height}`;
+    return undefined;
 }
 
 function parseA1111Params(str) {
